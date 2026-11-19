@@ -10,16 +10,38 @@ import {
   LeadItem
 } from './types';
 import {
-  INITIAL_CLASSES,
   INITIAL_MEMBERS,
-  INITIAL_WORKOUT_LOGS,
-  INITIAL_CHECKIN_FEED,
-  INITIAL_LEADS,
   INVOICES,
   TRAINERS,
   CLUB
 } from './constants/initialData';
 import { StorageService } from './services/storage';
+import { restoreSession, signOut } from './services/auth';
+import {
+  getMyProfile,
+  getAllMembers,
+  updateMyProfile,
+  toggleMemberStatus
+} from './services/members';
+import {
+  getClasses,
+  bookClass,
+  cancelBooking,
+  createClass,
+  subscribeToClasses
+} from './services/classes';
+import { getWorkouts, addWorkout } from './services/workouts';
+import {
+  getCheckInFeed,
+  recordManualCheckIn,
+  subscribeToCheckIns
+} from './services/checkins';
+import {
+  getOccupancy,
+  incrementOccupancy,
+  subscribeToOccupancy
+} from './services/occupancy';
+import { getLeads } from './services/leads';
 import { useNativeMobile } from './hooks/useNativeMobile';
 import { LoginPanel } from './features/auth/LoginPanel';
 import { StaffScanner } from './features/admin/StaffScanner';
@@ -51,12 +73,12 @@ export default function App() {
   const [session, setSession] = useState<UserSession | null>(null);
   const [memberProfile, setMemberProfile] = useState<MemberProfile>(INITIAL_MEMBERS[0]);
   const [members, setMembers] = useState<MemberProfile[]>(INITIAL_MEMBERS);
-  const [classes, setClasses] = useState<GymClass[]>(INITIAL_CLASSES);
-  const [workouts, setWorkouts] = useState<WorkoutEntry[]>(INITIAL_WORKOUT_LOGS);
-  const [feed, setFeed] = useState<CheckInFeedItem[]>(INITIAL_CHECKIN_FEED);
-  const [leads, setLeads] = useState<LeadItem[]>(INITIAL_LEADS);
+  const [classes, setClasses] = useState<GymClass[]>([]);
+  const [workouts, setWorkouts] = useState<WorkoutEntry[]>([]);
+  const [feed, setFeed] = useState<CheckInFeedItem[]>([]);
+  const [leads, setLeads] = useState<LeadItem[]>([]);
   const [occupancy, setOccupancy] = useState(64);
-  const [maxOccupancy] = useState(120);
+  const [maxOccupancy, setMaxOccupancy] = useState(120);
 
   const [settings, setSettings] = useState<AppSettings>({
     whatsapp: true,
@@ -74,147 +96,210 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3000);
   };
 
-  // 1. Load persisted state on startup
+  // 1. Initial Data Loading & Realtime Subscriptions
   useEffect(() => {
-    async function loadSavedData() {
-      const savedSession = await StorageService.get<UserSession | null>('apex_session', {
-        role: 'member',
-        name: 'Rohan Sharma',
-        memberId: 'APX-2041'
-      });
-      const savedMember = await StorageService.get<MemberProfile>('apex_member', INITIAL_MEMBERS[0]);
-      const savedClasses = await StorageService.get<GymClass[]>('apex_classes', INITIAL_CLASSES);
-      const savedWorkouts = await StorageService.get<WorkoutEntry[]>('apex_workouts', INITIAL_WORKOUT_LOGS);
-      const savedFeed = await StorageService.get<CheckInFeedItem[]>('apex_feed', INITIAL_CHECKIN_FEED);
-      const savedSettings = await StorageService.get<AppSettings>('apex_settings', settings);
+    async function loadInitialData() {
+      // Restore auth session
+      const restored = await restoreSession();
+      if (restored) {
+        setSession({
+          role: restored.role,
+          name: restored.name,
+          memberId: restored.memberId,
+          mobile: restored.phone
+        });
+      }
 
-      setSession(savedSession);
-      setMemberProfile(savedMember);
-      setClasses(savedClasses);
-      setWorkouts(savedWorkouts);
-      setFeed(savedFeed);
-      setSettings(savedSettings);
+      // Fetch domain data from services (Supabase or local fallback)
+      const [
+        profileRes,
+        membersRes,
+        classesRes,
+        workoutsRes,
+        feedRes,
+        leadsRes,
+        occupancyRes,
+        settingsRes
+      ] = await Promise.all([
+        getMyProfile(),
+        getAllMembers(),
+        getClasses(),
+        getWorkouts(),
+        getCheckInFeed(),
+        getLeads(),
+        getOccupancy(),
+        StorageService.get<AppSettings>('apex_settings', settings)
+      ]);
+
+      if (profileRes) setMemberProfile(profileRes);
+      if (membersRes.length > 0) setMembers(membersRes);
+      setClasses(classesRes);
+      setWorkouts(workoutsRes);
+      setFeed(feedRes);
+      setLeads(leadsRes);
+      setOccupancy(occupancyRes.current);
+      setMaxOccupancy(occupancyRes.max);
+      setSettings(settingsRes);
       setIsLoaded(true);
     }
-    loadSavedData();
+
+    loadInitialData();
+
+    // Setup Realtime subscriptions
+    const unsubOccupancy = subscribeToOccupancy((curr, max) => {
+      setOccupancy(curr);
+      setMaxOccupancy(max);
+    });
+
+    const unsubCheckIns = subscribeToCheckIns((newEntry) => {
+      setFeed((prev) => [newEntry, ...prev.slice(0, 7)]);
+    });
+
+    const unsubClasses = subscribeToClasses(async () => {
+      const refreshed = await getClasses();
+      setClasses(refreshed);
+    });
+
+    return () => {
+      if (unsubOccupancy) unsubOccupancy();
+      if (unsubCheckIns) unsubCheckIns();
+      if (unsubClasses) unsubClasses();
+    };
   }, []);
 
-  // 2. Hardware Back Button handler on Android
+  // 2. Hardware Back Button on Android
   const handleBackPress = useCallback(() => {
-    // If on desktop preview or bare view, return false to let default Android back handle exit if on home
     return false;
   }, []);
 
   useNativeMobile({ onBackPress: handleBackPress });
 
-  // 3. Handlers with Auto-Persistence
-  const handleLogin = (newSession: UserSession) => {
+  // 3. User Actions
+  const handleLogin = async (newSession: UserSession) => {
     setSession(newSession);
-    StorageService.set('apex_session', newSession);
     showToast(`Signed in as ${newSession.name} (${newSession.role})`);
+
+    // Refresh profile for the authenticated user
+    const profile = await getMyProfile();
+    if (profile) setMemberProfile(profile);
+
+    const refreshedClasses = await getClasses();
+    setClasses(refreshedClasses);
+
+    const refreshedWorkouts = await getWorkouts();
+    setWorkouts(refreshedWorkouts);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await signOut();
     setSession(null);
-    StorageService.remove('apex_session');
-    showToast('Signed out');
+    showToast('Signed out successfully');
   };
 
-  const handleCheckInSimulate = (method = 'Dynamic QR Token') => {
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newEntry: CheckInFeedItem = {
-      id: `chk-${Date.now()}`,
-      member: `${memberProfile.name} (You)`,
-      tier: memberProfile.tier,
-      time: nowStr,
+  const handleCheckInSimulate = async (method = 'Dynamic QR Token') => {
+    await incrementOccupancy();
+    const entry = await recordManualCheckIn(
+      `${memberProfile.name} (You)`,
+      memberProfile.tier,
       method,
-      gate: 'Turnstile Bay A'
-    };
-    const nextFeed = [newEntry, ...feed.slice(0, 7)];
-    setFeed(nextFeed);
-    StorageService.set('apex_feed', nextFeed);
+      'Turnstile Bay A'
+    );
+    if (entry) {
+      setFeed((prev) => [entry, ...prev.slice(0, 7)]);
+    }
 
-    setOccupancy((prev) => Math.min(maxOccupancy, prev + 1));
-    const nextProfile = {
-      ...memberProfile,
-      streakDays: memberProfile.streakDays + 1,
+    const nextStreak = memberProfile.streakDays + 1;
+    await updateMyProfile({ streakDays: nextStreak, isCheckedIn: true });
+    setMemberProfile((prev) => ({
+      ...prev,
+      streakDays: nextStreak,
       isCheckedIn: true
-    };
-    setMemberProfile(nextProfile);
-    StorageService.set('apex_member', nextProfile);
+    }));
+    setOccupancy((prev) => Math.min(maxOccupancy, prev + 1));
     showToast('Gate pass verified! Live occupancy updated.');
   };
 
-  const handleStaffCheckIn = (m: MemberProfile, method = 'Staff Scanner') => {
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const newEntry: CheckInFeedItem = {
-      id: `chk-${Date.now()}`,
-      member: m.name,
-      tier: m.tier,
-      time: nowStr,
+  const handleStaffCheckIn = async (m: MemberProfile, method = 'Staff Scanner') => {
+    await incrementOccupancy();
+    const entry = await recordManualCheckIn(
+      m.name,
+      m.tier,
       method,
-      gate: 'Front Desk Scanner'
-    };
-    const nextFeed = [newEntry, ...feed.slice(0, 7)];
-    setFeed(nextFeed);
-    StorageService.set('apex_feed', nextFeed);
+      'Front Desk Scanner'
+    );
+    if (entry) {
+      setFeed((prev) => [entry, ...prev.slice(0, 7)]);
+    }
     setOccupancy((prev) => Math.min(maxOccupancy, prev + 1));
     showToast(`Checked in ${m.name}`);
   };
 
-  const handleToggleClassBooking = (classId: string) => {
-    const updated = classes.map((cls) => {
-      if (cls.id !== classId) return cls;
-      if (cls.isBookedByMe) {
-        showToast(`Canceled spot in ${cls.title}`);
-        return {
-          ...cls,
-          isBookedByMe: false,
-          bookedCount: Math.max(0, cls.bookedCount - 1),
-          roster: cls.roster.filter((r) => !r.includes('You'))
-        };
+  const handleToggleClassBooking = async (classId: string) => {
+    const target = classes.find((c) => c.id === classId);
+    if (!target) return;
+
+    if (target.isBookedByMe) {
+      const res = await cancelBooking(classId);
+      if (res.success) {
+        showToast(`Canceled spot in ${target.title}`);
+        setClasses((prev) =>
+          prev.map((c) =>
+            c.id === classId
+              ? {
+                  ...c,
+                  isBookedByMe: false,
+                  bookedCount: Math.max(0, c.bookedCount - 1),
+                  roster: c.roster.filter((r) => !r.includes('You'))
+                }
+              : c
+          )
+        );
       } else {
-        const isFull = cls.bookedCount >= cls.capacity;
-        if (isFull) {
-          showToast(`Added to priority waitlist for ${cls.title}`);
-          return {
-            ...cls,
-            isBookedByMe: true,
-            waitlistCount: cls.waitlistCount + 1,
-            roster: [`${memberProfile.name} (You - Waitlist)`, ...cls.roster]
-          };
-        } else {
-          showToast(`Spot confirmed for ${cls.title}!`);
-          return {
-            ...cls,
-            isBookedByMe: true,
-            bookedCount: cls.bookedCount + 1,
-            roster: [`${memberProfile.name} (You)`, ...cls.roster]
-          };
-        }
+        showToast(res.error || 'Failed to cancel booking');
       }
-    });
-    setClasses(updated);
-    StorageService.set('apex_classes', updated);
+    } else {
+      const res = await bookClass(classId);
+      if (res.success) {
+        if (res.waitlist) {
+          showToast(`Added to priority waitlist for ${target.title}`);
+        } else {
+          showToast(`Spot confirmed for ${target.title}!`);
+        }
+        setClasses((prev) =>
+          prev.map((c) =>
+            c.id === classId
+              ? {
+                  ...c,
+                  isBookedByMe: true,
+                  bookedCount: res.waitlist ? c.bookedCount : c.bookedCount + 1,
+                  waitlistCount: res.waitlist ? c.waitlistCount + 1 : c.waitlistCount,
+                  roster: [`${memberProfile.name} (You)`, ...c.roster]
+                }
+              : c
+          )
+        );
+      } else {
+        showToast(res.error || 'Failed to book spot');
+      }
+    }
   };
 
-  const handleAddWorkout = (entry: Omit<WorkoutEntry, 'id' | 'date'>) => {
-    const fullEntry: WorkoutEntry = {
-      ...entry,
-      id: `w-${Date.now()}`,
-      date: 'Just now'
-    };
-    const updated = [fullEntry, ...workouts];
-    setWorkouts(updated);
-    StorageService.set('apex_workouts', updated);
-    showToast(`Logged ${entry.exercise} (${entry.weight})`);
+  const handleAddWorkout = async (entry: Omit<WorkoutEntry, 'id' | 'date'>) => {
+    const res = await addWorkout(entry);
+    if (res.success && res.workout) {
+      setWorkouts((prev) => [res.workout!, ...prev]);
+      showToast(`Logged ${entry.exercise} (${entry.weight})`);
+    } else {
+      showToast(res.error || 'Failed to save workout');
+    }
   };
 
-  const handleUpdateProfile = (updates: Partial<MemberProfile>) => {
-    const next = { ...memberProfile, ...updates };
-    setMemberProfile(next);
-    StorageService.set('apex_member', next);
-    showToast('Profile updated');
+  const handleUpdateProfile = async (updates: Partial<MemberProfile>) => {
+    const res = await updateMyProfile(updates);
+    if (res) {
+      setMemberProfile(res);
+      showToast('Profile updated');
+    }
   };
 
   const handleUpdateSettings = (updates: Partial<AppSettings>) => {
@@ -223,31 +308,30 @@ export default function App() {
     StorageService.set('apex_settings', next);
   };
 
-  const handleCreateClass = (
+  const handleCreateClass = async (
     newCls: Omit<GymClass, 'id' | 'bookedCount' | 'isBookedByMe' | 'waitlistCount' | 'roster'>
   ) => {
-    const full: GymClass = {
-      ...newCls,
-      id: `cls-${Date.now()}`,
-      bookedCount: 0,
-      isBookedByMe: false,
-      waitlistCount: 0,
-      roster: []
-    };
-    const next = [full, ...classes];
-    setClasses(next);
-    StorageService.set('apex_classes', next);
-    showToast(`Class "${full.title}" published!`);
+    const res = await createClass(newCls);
+    if (res.success && res.newClass) {
+      setClasses((prev) => [res.newClass!, ...prev]);
+      showToast(`Class "${newCls.title}" published!`);
+    } else {
+      showToast(res.error || 'Failed to publish class');
+    }
   };
 
-  const handleToggleMemberStatus = (memberId: string) => {
-    const updated = members.map((m) =>
-      m.id === memberId
-        ? { ...m, status: (m.status === 'Active' ? 'Payment Due' : 'Active') as any }
-        : m
-    );
-    setMembers(updated);
-    showToast('Member status updated');
+  const handleToggleMemberStatus = async (memberId: string) => {
+    const success = await toggleMemberStatus(memberId);
+    if (success) {
+      setMembers((prev) =>
+        prev.map((m) =>
+          m.id === memberId
+            ? { ...m, status: m.status === 'Active' ? 'Payment Due' : 'Active' }
+            : m
+        )
+      );
+      showToast('Member status updated');
+    }
   };
 
   if (!isLoaded) {
@@ -343,7 +427,7 @@ export default function App() {
               <div>
                 <span className="font-black text-white text-sm">APEX GYM</span>
                 <span className="ml-2 px-2 py-0.5 rounded-md bg-lime-400/15 text-lime-400 text-[10px] font-bold uppercase">
-                  Production Build
+                  Connected Backend
                 </span>
               </div>
             </div>

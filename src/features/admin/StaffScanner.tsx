@@ -3,6 +3,7 @@ import { LogOut, ScanLine, CheckCircle2, XCircle, Camera, Search } from 'lucide-
 import { MemberProfile, CheckInFeedItem } from '../../types';
 import { CameraScannerModal } from '../../components/CameraScannerModal';
 import { useNativeMobile } from '../../hooks/useNativeMobile';
+import { verifyGateToken } from '../../services/gate';
 
 interface StaffScannerProps {
   name: string;
@@ -29,10 +30,11 @@ export function StaffScanner({
   const [result, setResult] = useState<{ ok: boolean; title: string; detail: string } | null>(null);
   const [manual, setManual] = useState('');
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
 
   const cleanName = (n: string) => n.replace(' (You)', '');
 
-  const verifyMember = (m: MemberProfile) => {
+  const verifyMemberLocally = (m: MemberProfile) => {
     if (m.status === 'Active') {
       triggerHaptic('success');
       return {
@@ -51,42 +53,59 @@ export function StaffScanner({
     }
   };
 
-  const handleCameraScanSuccess = (rawText: string) => {
+  const handleCameraScanSuccess = async (rawText: string) => {
     setIsCameraOpen(false);
+    setIsVerifying(true);
+    setResult(null);
+
     try {
-      const parsed = JSON.parse(rawText);
-      const matched = members.find(
-        (m) => m.memberId.toLowerCase() === (parsed.memberId || '').toLowerCase()
-      );
-      if (matched) {
-        const res = verifyMember(matched);
-        setResult(res);
-        if (res.ok) onCheckIn(matched, 'Camera QR Scan');
+      const verifyRes = await verifyGateToken(rawText, 'Front Desk Scanner');
+      if (verifyRes.verified && verifyRes.memberId) {
+        triggerHaptic('success');
+        const matched =
+          members.find((m) => m.memberId.toLowerCase() === verifyRes.memberId?.toLowerCase()) ||
+          ({
+            id: verifyRes.memberId,
+            memberId: verifyRes.memberId,
+            name: verifyRes.memberName || 'Member',
+            tier: verifyRes.memberTier || 'Pro',
+            status: 'Active',
+            streakDays: 1,
+            nextRenewal: '',
+            cardLast4: '',
+            isCheckedIn: true,
+            mobile: '',
+            email: '',
+            goal: '',
+            homeClub: 'Park Street',
+            coach: '',
+            joined: '',
+            emergencyContact: ''
+          } as MemberProfile);
+
+        setResult({
+          ok: true,
+          title: `Welcome, ${cleanName(verifyRes.memberName || matched.name)}`,
+          detail: `${verifyRes.memberTier || matched.tier} · ${verifyRes.memberId}`
+        });
+        onCheckIn(matched, 'Server QR Verification');
       } else {
         triggerHaptic('error');
         setResult({
           ok: false,
-          title: 'Unrecognized QR Pass',
-          detail: `No member found for ID: ${parsed.memberId || 'Unknown'}`
+          title: 'Entry Denied',
+          detail: verifyRes.reason || 'Invalid QR pass'
         });
       }
-    } catch {
-      // Raw string format
-      const matched = members.find((m) =>
-        m.name.toLowerCase().includes(rawText.toLowerCase()) || m.memberId.toLowerCase().includes(rawText.toLowerCase())
-      );
-      if (matched) {
-        const res = verifyMember(matched);
-        setResult(res);
-        if (res.ok) onCheckIn(matched, 'Camera QR Scan');
-      } else {
-        triggerHaptic('error');
-        setResult({
-          ok: false,
-          title: 'Unrecognized Code',
-          detail: `Scanned content: ${rawText}`
-        });
-      }
+    } catch (err: any) {
+      triggerHaptic('error');
+      setResult({
+        ok: false,
+        title: 'Verification Failed',
+        detail: err?.message || 'Could not verify pass.'
+      });
+    } finally {
+      setIsVerifying(false);
     }
   };
 
@@ -100,7 +119,7 @@ export function StaffScanner({
     );
 
     if (matched) {
-      const res = verifyMember(matched);
+      const res = verifyMemberLocally(matched);
       setResult(res);
       if (res.ok) onCheckIn(matched, 'Manual ID Entry');
     } else {
@@ -156,10 +175,12 @@ export function StaffScanner({
             </p>
           </div>
           <button
+            disabled={isVerifying}
             onClick={() => setIsCameraOpen(true)}
-            className="w-full flex items-center justify-center gap-2 rounded-xl bg-lime-400 hover:bg-lime-300 py-3 text-sm font-bold text-zinc-950 transition shadow-lg shadow-lime-400/20"
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-lime-400 hover:bg-lime-300 py-3 text-sm font-bold text-zinc-950 transition shadow-lg shadow-lime-400/20 disabled:opacity-50"
           >
-            <Camera className="w-4 h-4" /> Open Live Camera Scanner
+            <Camera className="w-4 h-4" />
+            {isVerifying ? 'Verifying with server…' : 'Open Live Camera Scanner'}
           </button>
         </div>
       </div>

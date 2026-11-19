@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { UserRole, UserSession } from '../../types';
+import { sendOtp as sendOtpService, verifyOtp as verifyOtpService } from '../../services/auth';
 
 interface LoginPanelProps {
   lockRole?: UserRole;
@@ -18,11 +19,12 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
   const [mobile, setMobile] = useState('');
   const [otp, setOtp] = useState('');
   const [err, setErr] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const inputClass =
     'w-full rounded-xl bg-zinc-900 border border-zinc-800 px-3 py-3 text-sm text-white focus:outline-none focus:border-lime-400/60 placeholder:text-zinc-600';
 
-  const sendOtp = (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanMobile = mobile.replace(/\s+/g, '');
     if (!/^\d{10}$/.test(cleanMobile)) {
@@ -30,21 +32,41 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
       return;
     }
     setErr('');
+    setIsLoading(true);
+
+    const result = await sendOtpService(cleanMobile);
+    setIsLoading(false);
+
+    if (!result.success) {
+      setErr(result.error || 'Failed to send OTP. Please try again.');
+      return;
+    }
     setStep(2);
   };
 
-  const verifyOtp = (e: React.FormEvent) => {
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (otp !== '1234') {
-      setErr('Incorrect code. Demo verification code is 1234.');
+    if (!otp.trim()) {
+      setErr('Please enter the 4-digit code');
       return;
     }
-    const account = DEMO_ACCOUNTS[role];
+    setErr('');
+    setIsLoading(true);
+
+    const cleanMobile = mobile.replace(/\s+/g, '');
+    const result = await verifyOtpService(cleanMobile, otp.trim());
+    setIsLoading(false);
+
+    if (!result.success || !result.session) {
+      setErr(result.error || 'Verification failed. Please check the code.');
+      return;
+    }
+
     onLogin({
-      role,
-      name: account.name,
-      memberId: account.memberId,
-      mobile: mobile || account.mobile
+      role: result.session.role,
+      name: result.session.name,
+      memberId: result.session.memberId,
+      mobile: result.session.phone || cleanMobile
     });
   };
 
@@ -94,7 +116,7 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
       )}
 
       {step === 1 ? (
-        <form onSubmit={sendOtp} className="space-y-3">
+        <form onSubmit={handleSendOtp} className="space-y-3">
           <label className="block text-xs font-semibold text-zinc-400">
             Mobile Number
             <div className="relative mt-1">
@@ -111,19 +133,20 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
           {err && <p className="text-xs text-red-400">{err}</p>}
           <button
             type="submit"
-            className="w-full rounded-xl bg-lime-400 py-3 text-sm font-bold text-zinc-950 hover:bg-lime-300 transition shadow-md shadow-lime-400/20"
+            disabled={isLoading}
+            className="w-full rounded-xl bg-lime-400 py-3 text-sm font-bold text-zinc-950 hover:bg-lime-300 transition shadow-md shadow-lime-400/20 disabled:opacity-50"
           >
-            Send Verification Code
+            {isLoading ? 'Sending code…' : 'Send Verification Code'}
           </button>
         </form>
       ) : (
-        <form onSubmit={verifyOtp} className="space-y-3">
+        <form onSubmit={handleVerifyOtp} className="space-y-3">
           <label className="block text-xs font-semibold text-zinc-400">
             Enter 4-digit code sent to +91 {mobile}
             <input
               value={otp}
               onChange={(e) => setOtp(e.target.value)}
-              maxLength={4}
+              maxLength={6}
               inputMode="numeric"
               placeholder="1234"
               className={`mt-1 text-center font-mono tracking-widest text-lg ${inputClass}`}
@@ -133,9 +156,10 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
           {err && <p className="text-xs text-red-400">{err}</p>}
           <button
             type="submit"
-            className="w-full rounded-xl bg-lime-400 py-3 text-sm font-bold text-zinc-950 hover:bg-lime-300 transition shadow-md shadow-lime-400/20"
+            disabled={isLoading}
+            className="w-full rounded-xl bg-lime-400 py-3 text-sm font-bold text-zinc-950 hover:bg-lime-300 transition shadow-md shadow-lime-400/20 disabled:opacity-50"
           >
-            Verify & Continue
+            {isLoading ? 'Verifying…' : 'Verify & Continue'}
           </button>
           <button
             type="button"
