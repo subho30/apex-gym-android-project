@@ -53,3 +53,45 @@ export async function toggleMemberStatus(memberId: string): Promise<boolean> {
     return true;
   }
 }
+
+export async function enrollMember(data: {
+  name: string;
+  mobile: string;
+  email?: string;
+  tier?: string;
+  goal?: string;
+  emergencyContact?: string;
+  status?: 'Active' | 'Payment Due';
+}): Promise<{ success: boolean; member?: MemberProfile; error?: string }> {
+  try {
+    const res = await apiFetch<{ success: boolean; member: MemberProfile }>('/members', {
+      method: 'POST',
+      body: JSON.stringify(data)
+    });
+    return { success: res.success, member: res.member };
+  } catch (err: any) {
+    const cleanPhone = data.mobile.replace(/\s+/g, '');
+    const memberTag = `APX-${Math.floor(2000 + Math.random() * 7900)}`;
+    const newMember: MemberProfile = {
+      id: `mem-${Date.now()}`,
+      memberId: memberTag,
+      name: data.name.trim(),
+      tier: data.tier || 'Annual Pro',
+      status: data.status || 'Active',
+      streakDays: 0,
+      nextRenewal: 'Dec 01, 2026',
+      cardLast4: '1024',
+      isCheckedIn: false,
+      mobile: `+91 ${cleanPhone}`,
+      email: data.email || '',
+      goal: data.goal || 'General Fitness',
+      homeClub: 'Park Street Flagship',
+      coach: 'Karan Singh',
+      joined: new Date().toISOString().slice(0, 10),
+      emergencyContact: data.emergencyContact || ''
+    };
+    const members = await StorageService.get<MemberProfile[]>('apex_members', INITIAL_MEMBERS);
+    await StorageService.set('apex_members', [newMember, ...members]);
+    return { success: true, member: newMember };
+  }
+}

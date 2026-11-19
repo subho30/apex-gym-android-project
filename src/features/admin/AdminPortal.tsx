@@ -11,9 +11,11 @@ import {
   TrendingUp,
   CreditCard,
   UserCheck,
-  Clock
+  Clock,
+  UserPlus
 } from 'lucide-react';
 import { MemberProfile, GymClass, LeadItem, CheckInFeedItem } from '../../types';
+import { EnrollMemberModal } from './EnrollMemberModal';
 
 interface AdminPortalProps {
   members: MemberProfile[];
@@ -24,6 +26,7 @@ interface AdminPortalProps {
   maxOccupancy: number;
   onCreateClass: (cls: Omit<GymClass, 'id' | 'bookedCount' | 'isBookedByMe' | 'waitlistCount' | 'roster'>) => void;
   onToggleMemberStatus: (memberId: string) => void;
+  onMemberEnrolled?: (member: MemberProfile) => void;
   onLogout: () => void;
 }
 
@@ -36,10 +39,12 @@ export function AdminPortal({
   maxOccupancy,
   onCreateClass,
   onToggleMemberStatus,
+  onMemberEnrolled,
   onLogout
 }: AdminPortalProps) {
   const [activeTab, setActiveTab] = useState<'rosters' | 'members' | 'leads'>('rosters');
   const [memberQuery, setMemberQuery] = useState('');
+  const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
 
   // New Class Form State
   const [title, setTitle] = useState('');
@@ -259,7 +264,7 @@ export function AdminPortal({
       {/* TAB 2: MEMBERS */}
       {activeTab === 'members' && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="relative max-w-sm w-full">
               <Search className="w-4 h-4 text-zinc-500 absolute left-3 top-3" />
               <input
@@ -269,6 +274,13 @@ export function AdminPortal({
                 className="w-full pl-9 pr-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-xs text-white focus:outline-none focus:border-lime-400"
               />
             </div>
+            <button
+              onClick={() => setIsEnrollModalOpen(true)}
+              className="px-4 py-2.5 rounded-xl bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold text-xs uppercase tracking-wider transition flex items-center justify-center gap-1.5 shadow-md shadow-lime-400/20"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Enroll Walk-In Member</span>
+            </button>
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900 overflow-hidden">
@@ -339,6 +351,15 @@ export function AdminPortal({
           </div>
         </div>
       )}
+
+      {/* Enroll Walk-In Member Modal */}
+      <EnrollMemberModal
+        isOpen={isEnrollModalOpen}
+        onClose={() => setIsEnrollModalOpen(false)}
+        onMemberEnrolled={(newMember) => {
+          if (onMemberEnrolled) onMemberEnrolled(newMember);
+        }}
+      />
     </div>
   );
 }

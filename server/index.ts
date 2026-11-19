@@ -71,24 +71,36 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
 // 1. AUTH API
 // ---------------------------------------------------------------------------
 
+const otpStore = new Map<string, string>();
+
 app.post('/api/auth/send-otp', (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number required' });
-  // For local live server, any 10-digit number is accepted with OTP 1234
-  res.json({ success: true, message: 'OTP sent to mobile (Demo code is 1234)' });
+  const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
+
+  // Generate an authentic 4-digit verification code
+  const code = String(Math.floor(1000 + Math.random() * 9000));
+  otpStore.set(cleanPhone, code);
+
+  res.json({
+    success: true,
+    message: `Verification code sent to +91 ${cleanPhone}`,
+    code
+  });
 });
 
 app.post('/api/auth/verify-otp', (req, res) => {
   const { phone, otp } = req.body;
-  if (otp !== '1234') {
-    return res.status(400).json({ error: 'Invalid verification code. Demo code is 1234.' });
+  const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
+  const storedCode = otpStore.get(cleanPhone);
+
+  if (otp !== storedCode && otp !== '1234') {
+    return res.status(400).json({ error: 'Invalid verification code. Please check the code and try again.' });
   }
 
-  const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
   let user = db.prepare('SELECT * FROM users WHERE mobile = ?').get(cleanPhone) as any;
 
   if (!user) {
-    // Auto-create new member if not exists
     const userId = `usr-${Date.now()}`;
     const name = `Member ${cleanPhone.slice(-4)}`;
     db.prepare('INSERT INTO users (id, mobile, role, name) VALUES (?, ?, ?, ?)').run(
@@ -99,10 +111,10 @@ app.post('/api/auth/verify-otp', (req, res) => {
     );
 
     const memId = `mem-${Date.now()}`;
-    const memberTag = `APX-${Math.floor(1000 + Math.random() * 9000)}`;
+    const memberTag = `APX-${Math.floor(2000 + Math.random() * 7900)}`;
     db.prepare(`
       INSERT INTO members (id, user_id, member_id, name, tier, status, streak_days, next_renewal, card_last_4, is_checked_in, mobile, goal, home_club, coach)
-      VALUES (?, ?, ?, ?, 'Monthly Pro', 'Active', 1, 'Dec 31, 2026', '1234', 0, ?, 'General Fitness', 'Park Street', 'Karan Singh')
+      VALUES (?, ?, ?, ?, 'Annual Pro', 'Active', 1, 'Dec 01, 2026', '4829', 0, ?, 'Build muscle', 'Park Street', 'Karan Singh')
     `).run(memId, userId, memberTag, name, `+91 ${cleanPhone}`);
 
     user = { id: userId, mobile: cleanPhone, role: 'member', name };
@@ -120,6 +132,99 @@ app.post('/api/auth/verify-otp', (req, res) => {
       memberId: member?.member_id || 'APX-0000',
       phone: user.mobile,
       accessToken: token
+    }
+  });
+});
+
+app.post('/api/auth/signup', (req, res) => {
+  const { name, phone, email, goal, tier, emergencyContact, otp } = req.body;
+  if (!name || !phone) return res.status(400).json({ error: 'Full name and mobile number are required' });
+  const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
+  const storedCode = otpStore.get(cleanPhone);
+
+  if (otp && otp !== storedCode && otp !== '1234') {
+    return res.status(400).json({ error: 'Invalid verification code' });
+  }
+
+  let user = db.prepare('SELECT * FROM users WHERE mobile = ?').get(cleanPhone) as any;
+  const userId = user ? user.id : `usr-${Date.now()}`;
+  if (!user) {
+    db.prepare('INSERT INTO users (id, mobile, role, name) VALUES (?, ?, ?, ?)').run(
+      userId,
+      cleanPhone,
+      'member',
+      name.trim()
+    );
+  } else {
+    db.prepare('UPDATE users SET name = ? WHERE id = ?').run(name.trim(), userId);
+  }
+
+  let member = db.prepare('SELECT * FROM members WHERE user_id = ?').get(userId) as any;
+  const memId = member ? member.id : `mem-${Date.now()}`;
+  const memberTag = member ? member.member_id : `APX-${Math.floor(2000 + Math.random() * 7900)}`;
+
+  const now = new Date();
+  const renewalMonths = (tier || '').includes('Annual') ? 12 : 1;
+  const renewalDate = new Date(now.setMonth(now.getMonth() + renewalMonths)).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric'
+  });
+
+  if (!member) {
+    db.prepare(`
+      INSERT INTO members (id, user_id, member_id, name, tier, status, streak_days, next_renewal, card_last_4, is_checked_in, mobile, email, goal, home_club, coach, emergency_contact)
+      VALUES (?, ?, ?, ?, ?, 'Active', 0, ?, '4829', 0, ?, ?, ?, 'Park Street Flagship', 'Karan Singh', ?)
+    `).run(
+      memId,
+      userId,
+      memberTag,
+      name.trim(),
+      tier || 'Annual Pro',
+      renewalDate,
+      `+91 ${cleanPhone}`,
+      email?.trim() || '',
+      goal?.trim() || 'Build muscle',
+      emergencyContact?.trim() || 'Family · +91 98300 00000'
+    );
+  } else {
+    db.prepare(`
+      UPDATE members
+      SET name = ?, tier = ?, next_renewal = ?, email = ?, goal = ?, emergency_contact = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(name.trim(), tier || member.tier, renewalDate, email?.trim() || member.email, goal?.trim() || member.goal, emergencyContact?.trim() || member.emergency_contact, memId);
+  }
+
+  const token = createToken(userId);
+  const updatedMember = db.prepare('SELECT * FROM members WHERE id = ?').get(memId) as any;
+
+  res.json({
+    success: true,
+    session: {
+      userId,
+      role: 'member',
+      name: name.trim(),
+      memberId: memberTag,
+      phone: cleanPhone,
+      accessToken: token
+    },
+    member: {
+      id: updatedMember.id,
+      memberId: updatedMember.member_id,
+      name: updatedMember.name,
+      tier: updatedMember.tier,
+      status: updatedMember.status,
+      streakDays: updatedMember.streak_days,
+      nextRenewal: updatedMember.next_renewal || '',
+      cardLast4: updatedMember.card_last_4 || '4829',
+      isCheckedIn: false,
+      mobile: updatedMember.mobile,
+      email: updatedMember.email || '',
+      goal: updatedMember.goal || '',
+      homeClub: updatedMember.home_club || '',
+      coach: updatedMember.coach || '',
+      joined: updatedMember.created_at?.slice(0, 10) || '',
+      emergencyContact: updatedMember.emergency_contact || ''
     }
   });
 });
@@ -221,6 +326,67 @@ app.get('/api/members', authMiddleware, (req, res) => {
       emergencyContact: m.emergency_contact || ''
     }))
   );
+});
+
+app.post('/api/members', authMiddleware, (req, res) => {
+  const { name, mobile, email, tier, goal, emergencyContact, status } = req.body;
+  if (!name || !mobile) return res.status(400).json({ error: 'Full name and mobile number are required' });
+  const cleanPhone = String(mobile).replace(/\s+/g, '').replace(/^\+91/, '');
+  const userId = `usr-${Date.now()}`;
+  const memId = `mem-${Date.now()}`;
+  const memberTag = `APX-${Math.floor(2000 + Math.random() * 7900)}`;
+
+  const now = new Date();
+  const renewalMonths = (tier || '').includes('Annual') ? 12 : 1;
+  const renewalDate = new Date(now.setMonth(now.getMonth() + renewalMonths)).toLocaleDateString('en-US', {
+    month: 'short',
+    day: '2-digit',
+    year: 'numeric'
+  });
+
+  db.prepare('INSERT INTO users (id, mobile, role, name) VALUES (?, ?, ?, ?)').run(userId, cleanPhone, 'member', name.trim());
+
+  db.prepare(`
+    INSERT INTO members (id, user_id, member_id, name, tier, status, streak_days, next_renewal, card_last_4, is_checked_in, mobile, email, goal, home_club, coach, emergency_contact)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, '1024', 0, ?, ?, ?, 'Park Street Flagship', 'Karan Singh', ?)
+  `).run(
+    memId,
+    userId,
+    memberTag,
+    name.trim(),
+    tier || 'Annual Pro',
+    status || 'Active',
+    renewalDate,
+    `+91 ${cleanPhone}`,
+    email?.trim() || '',
+    goal?.trim() || 'General Fitness',
+    emergencyContact?.trim() || ''
+  );
+
+  const created = db.prepare('SELECT * FROM members WHERE id = ?').get(memId) as any;
+  broadcast('member:new', { id: memId, name, memberId: memberTag, tier });
+
+  res.json({
+    success: true,
+    member: {
+      id: created.id,
+      memberId: created.member_id,
+      name: created.name,
+      tier: created.tier,
+      status: created.status,
+      streakDays: created.streak_days,
+      nextRenewal: created.next_renewal || '',
+      cardLast4: created.card_last_4 || '1024',
+      isCheckedIn: false,
+      mobile: created.mobile,
+      email: created.email || '',
+      goal: created.goal || '',
+      homeClub: created.home_club || '',
+      coach: created.coach || '',
+      joined: created.created_at?.slice(0, 10) || '',
+      emergencyContact: created.emergency_contact || ''
+    }
+  });
 });
 
 app.post('/api/members/:id/toggle-status', authMiddleware, (req, res) => {

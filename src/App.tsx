@@ -334,6 +334,11 @@ export default function App() {
     }
   };
 
+  const handleMemberEnrolled = (newMember: MemberProfile) => {
+    setMembers((prev) => [newMember, ...prev]);
+    showToast(`Enrolled ${newMember.name} (${newMember.memberId})!`);
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-white">
@@ -495,6 +500,7 @@ export default function App() {
             maxOccupancy={maxOccupancy}
             onCreateClass={handleCreateClass}
             onToggleMemberStatus={handleToggleMemberStatus}
+            onMemberEnrolled={handleMemberEnrolled}
             onLogout={handleLogout}
           />
         )}
@@ -514,6 +520,7 @@ export default function App() {
                 maxOccupancy={maxOccupancy}
                 onCreateClass={handleCreateClass}
                 onToggleMemberStatus={handleToggleMemberStatus}
+                onMemberEnrolled={handleMemberEnrolled}
                 onLogout={handleLogout}
               />
             </div>
