@@ -862,6 +862,19 @@ app.post('/api/payments/verify', authMiddleware, (req, res) => {
   });
 });
 
+// --- Serve Static Frontend Assets (Production Unified Deployment) ---
+import path from 'node:path';
+import fs from 'node:fs';
+
+const distPath = path.resolve(process.cwd(), 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws')) return next();
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
 // --- Start Server ---
 server.listen(PORT, () => {
   console.log(`[Apex Backend] Live REST & WebSocket Server running at http://localhost:${PORT}`);
