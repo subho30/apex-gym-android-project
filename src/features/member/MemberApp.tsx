@@ -25,8 +25,12 @@ import {
   Sparkles,
   Zap,
   MapPin,
-  ShieldCheck
+  ShieldCheck,
+  Download,
+  FileText
 } from 'lucide-react';
+import { downloadInvoicePdf } from '../../utils/generateInvoicePdf';
+import { launchRazorpayPayment } from '../../services/payments';
 import {
   MemberProfile,
   GymClass,
@@ -118,6 +122,40 @@ export function MemberApp({
     setExercise('');
     setWeight('');
     setIsPR(false);
+  };
+
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [paymentNotice, setPaymentNotice] = useState<string | null>(null);
+
+  const handleRenewMembership = async () => {
+    setPaymentProcessing(true);
+    triggerHaptic('light');
+    try {
+      await launchRazorpayPayment({
+        amount: 28500,
+        planName: `${member.tier} Membership Renewal`,
+        memberId: member.memberId,
+        memberName: member.name,
+        memberEmail: member.email,
+        memberPhone: member.mobile,
+        onSuccess: (paymentId) => {
+          triggerHaptic('success');
+          setPaymentNotice(`Payment Successful! Razorpay Ref: ${paymentId}`);
+          setTimeout(() => setPaymentNotice(null), 10000);
+        },
+        onFailure: (err) => {
+          triggerHaptic('error');
+          setPaymentNotice(`Payment Status: ${err}`);
+          setTimeout(() => setPaymentNotice(null), 6000);
+        }
+      });
+    } catch (err: any) {
+      console.error('Razorpay launch error:', err);
+      setPaymentNotice('Unable to launch checkout. Please check connection.');
+      setTimeout(() => setPaymentNotice(null), 5000);
+    } finally {
+      setPaymentProcessing(false);
+    }
   };
 
   const myBookedClasses = classes.filter((c) => c.isBookedByMe);
@@ -421,6 +459,14 @@ export function MemberApp({
           <div className="space-y-4">
             <h2 className="text-base font-bold text-white">Membership & Invoices</h2>
 
+            {/* Payment Notice Banner */}
+            {paymentNotice && (
+              <div className="p-3.5 rounded-2xl bg-lime-500/10 border border-lime-500/30 text-lime-300 text-xs font-semibold flex items-center gap-2.5 shadow-lg">
+                <CheckCircle2 className="w-4 h-4 text-lime-400 flex-shrink-0" />
+                <span className="flex-1">{paymentNotice}</span>
+              </div>
+            )}
+
             {/* Digital Membership Card */}
             <div className="p-5 rounded-3xl bg-gradient-to-br from-zinc-800 to-zinc-950 border border-zinc-700/80 shadow-2xl relative overflow-hidden space-y-4">
               <div className="flex items-center justify-between">
@@ -439,27 +485,54 @@ export function MemberApp({
                 <span>Next Renewal: {member.nextRenewal}</span>
                 <span>Visa •••• {member.cardLast4}</span>
               </div>
+
+              {/* Razorpay Renewal Trigger */}
+              <button
+                onClick={handleRenewMembership}
+                disabled={paymentProcessing}
+                className="w-full mt-2 py-3 px-4 rounded-2xl bg-gradient-to-r from-lime-400 to-emerald-400 hover:from-lime-300 hover:to-emerald-300 text-zinc-950 font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-lime-950/40 transition-all active:scale-[0.98] disabled:opacity-50"
+              >
+                <CreditCard className="w-4 h-4" />
+                {paymentProcessing ? 'Launching Razorpay Gateway...' : 'Renew Membership • Razorpay Test'}
+              </button>
             </div>
 
             {/* Invoices */}
             <div className="space-y-2">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-                Payment History
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                  Payment History & Tax Invoices
+                </h3>
+                <span className="text-[10px] text-zinc-500 font-mono">GST Compliant</span>
+              </div>
+
               {invoices.map((inv) => (
                 <div
                   key={inv.id}
-                  className="p-3.5 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-between text-xs"
+                  className="p-3.5 rounded-2xl bg-zinc-900 border border-zinc-800 flex items-center justify-between text-xs hover:border-zinc-700 transition"
                 >
-                  <div>
+                  <div className="space-y-0.5">
                     <p className="font-semibold text-white">{inv.desc}</p>
-                    <p className="text-zinc-500 text-[11px] mt-0.5">
+                    <p className="text-zinc-500 text-[11px]">
                       {inv.id} • {inv.date}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <span className="font-bold text-lime-400 block">{inv.amount}</span>
-                    <span className="text-[10px] text-zinc-400">{inv.status}</span>
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <span className="font-bold text-lime-400 block">{inv.amount}</span>
+                      <span className="text-[10px] text-zinc-400">{inv.status}</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        triggerHaptic('light');
+                        downloadInvoicePdf(inv, member);
+                      }}
+                      title="Download GST Tax Invoice (PDF)"
+                      className="p-2 px-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-zinc-700/60 transition flex items-center gap-1.5 text-[11px] font-semibold active:scale-95"
+                    >
+                      <Download className="w-3.5 h-3.5 text-lime-400" />
+                      <span className="hidden sm:inline">Tax Invoice</span>
+                    </button>
                   </div>
                 </div>
               ))}

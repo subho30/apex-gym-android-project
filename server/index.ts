@@ -4,6 +4,9 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import { db, initDb } from './db';
+import { sendRealSms } from './sms';
+import { sendWelcomeEmail, sendClassBookingEmail } from './email';
+import { createRazorpayOrder, verifyPaymentSignature } from './payments';
 
 initDb();
 
@@ -73,7 +76,7 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
 
 const otpStore = new Map<string, string>();
 
-app.post('/api/auth/send-otp', (req, res) => {
+app.post('/api/auth/send-otp', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number required' });
   const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
@@ -82,10 +85,16 @@ app.post('/api/auth/send-otp', (req, res) => {
   const code = String(Math.floor(1000 + Math.random() * 9000));
   otpStore.set(cleanPhone, code);
 
+  // Dispatch real SMS via Fast2SMS
+  const smsResult = await sendRealSms(cleanPhone, code);
+
   res.json({
     success: true,
-    message: `Verification code sent to +91 ${cleanPhone}`,
-    code
+    message: smsResult.success
+      ? `Verification code dispatched via SMS to +91 ${cleanPhone}`
+      : `Code generated for +91 ${cleanPhone}`,
+    code,
+    smsDelivered: smsResult.success
   });
 });
 
@@ -197,6 +206,17 @@ app.post('/api/auth/signup', (req, res) => {
 
   const token = createToken(userId);
   const updatedMember = db.prepare('SELECT * FROM members WHERE id = ?').get(memId) as any;
+
+  // Trigger real welcome email via Resend if email was entered
+  if (email && email.includes('@')) {
+    sendWelcomeEmail({
+      name: name.trim(),
+      email: email.trim(),
+      memberId: memberTag,
+      tier: tier || 'Annual Pro',
+      renewalDate
+    }).catch((err) => console.warn('[Welcome Email Failed]:', err));
+  }
 
   res.json({
     success: true,
@@ -491,6 +511,15 @@ app.post('/api/classes/:id/book', authMiddleware, (req, res) => {
     db.prepare('UPDATE classes SET booked_count = booked_count + 1 WHERE id = ?').run(classId);
   }
 
+  // Trigger class booking email via Resend
+  const fullMember = db.prepare('SELECT name, email FROM members WHERE id = ?').get(member.id) as any;
+  if (fullMember?.email && fullMember.email.includes('@')) {
+    sendClassBookingEmail(
+      { name: fullMember.name, email: fullMember.email },
+      { title: cls.title, time: cls.time, trainer: cls.trainer, room: cls.room }
+    ).catch(() => {});
+  }
+
   broadcast('class:update', { action: 'book', classId });
   res.json({ success: true, waitlist: isWaitlist });
 });
@@ -773,6 +802,62 @@ app.post('/api/leads', (req, res) => {
   );
 
   res.json({ success: true, message: 'Inquiry received. Our coach will call you within 2 hours.' });
+});
+
+// ---------------------------------------------------------------------------
+// 8. PAYMENTS API (RAZORPAY TEST MODE INTEGRATION)
+// ---------------------------------------------------------------------------
+
+app.post('/api/payments/create-order', authMiddleware, async (req, res) => {
+  const { amount, planName, memberId } = req.body;
+  const numAmount = Number(amount) || 3499;
+  const receiptId = `rcpt_${Date.now()}`;
+
+  const orderRes = await createRazorpayOrder(numAmount, receiptId, {
+    planName: planName || 'Annual Pro',
+    memberId: memberId || ''
+  });
+
+  if (!orderRes.success) {
+    return res.status(500).json({ error: orderRes.error });
+  }
+
+  res.json(orderRes);
+});
+
+app.post('/api/payments/verify', authMiddleware, (req, res) => {
+  const { orderId, paymentId, signature, memberId, planName, amount } = req.body;
+  if (!orderId || !paymentId || !signature) {
+    return res.status(400).json({ error: 'Missing payment verification credentials' });
+  }
+
+  const isValid = verifyPaymentSignature(orderId, paymentId, signature);
+  if (!isValid) {
+    return res.status(400).json({ error: 'Invalid payment signature from gateway' });
+  }
+
+  // Update member status to Active and set renewal date
+  if (memberId) {
+    const now = new Date();
+    const months = (planName || '').includes('Annual') ? 12 : 1;
+    const renewalDate = new Date(now.setMonth(now.getMonth() + months)).toLocaleDateString('en-US', {
+      month: 'short',
+      day: '2-digit',
+      year: 'numeric'
+    });
+
+    db.prepare(`
+      UPDATE members
+      SET status = 'Active', tier = COALESCE(?, tier), next_renewal = ?, is_checked_in = 0, updated_at = datetime('now')
+      WHERE id = ? OR member_id = ?
+    `).run(planName || 'Annual Pro', renewalDate, memberId, memberId);
+  }
+
+  res.json({
+    success: true,
+    message: 'Payment verified and membership activated!',
+    paymentId
+  });
 });
 
 // --- Start Server ---
