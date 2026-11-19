@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import http from 'node:http';
@@ -99,11 +100,12 @@ app.post('/api/auth/send-otp', async (req, res) => {
 });
 
 app.post('/api/auth/verify-otp', (req, res) => {
-  const { phone, otp } = req.body;
+  const { phone, otp, code } = req.body;
+  const submittedOtp = otp || code;
   const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
   const storedCode = otpStore.get(cleanPhone);
 
-  if (otp !== storedCode && otp !== '1234') {
+  if (submittedOtp !== storedCode && submittedOtp !== '1234') {
     return res.status(400).json({ error: 'Invalid verification code. Please check the code and try again.' });
   }
 

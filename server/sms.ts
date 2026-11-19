@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 // Fast2SMS API Integration for Real Telecom SMS Delivery
 
 export async function sendRealSms(phone: string, otpCode: string): Promise<{ success: boolean; message?: string }> {

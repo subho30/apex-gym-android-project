@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import Razorpay from 'razorpay';
 import crypto from 'node:crypto';
 
@@ -33,10 +34,10 @@ export async function createRazorpayOrder(
       keyId: key_id
     };
   } catch (err: any) {
-    console.error('[Razorpay Order Error]:', err);
+    console.error('[Razorpay Order Error]:', err?.error?.description || err?.message || err);
     return {
       success: false,
-      error: err?.message || 'Failed to initialize payment gateway order'
+      error: err?.error?.description || err?.message || 'Failed to initialize payment gateway order'
     };
   }
 }
