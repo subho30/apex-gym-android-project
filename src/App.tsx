@@ -7,11 +7,11 @@ import {
   CheckInFeedItem,
   UserSession,
   AppSettings,
-  LeadItem
+  LeadItem,
+  InvoiceItem
 } from './types';
 import {
   INITIAL_MEMBERS,
-  INVOICES,
   TRAINERS,
   CLUB
 } from './constants/initialData';
@@ -31,6 +31,7 @@ import {
   subscribeToClasses
 } from './services/classes';
 import { getWorkouts, addWorkout } from './services/workouts';
+import { getInvoices } from './services/invoices';
 import {
   getCheckInFeed,
   recordManualCheckIn,
@@ -77,6 +78,7 @@ export default function App() {
   const [workouts, setWorkouts] = useState<WorkoutEntry[]>([]);
   const [feed, setFeed] = useState<CheckInFeedItem[]>([]);
   const [leads, setLeads] = useState<LeadItem[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
   const [occupancy, setOccupancy] = useState(64);
   const [maxOccupancy, setMaxOccupancy] = useState(120);
 
@@ -119,7 +121,8 @@ export default function App() {
         feedRes,
         leadsRes,
         occupancyRes,
-        settingsRes
+        settingsRes,
+        invoicesRes
       ] = await Promise.all([
         getMyProfile(),
         getAllMembers(),
@@ -128,7 +131,8 @@ export default function App() {
         getCheckInFeed(),
         getLeads(),
         getOccupancy(),
-        StorageService.get<AppSettings>('apex_settings', settings)
+        StorageService.get<AppSettings>('apex_settings', settings),
+        getInvoices()
       ]);
 
       if (profileRes) setMemberProfile(profileRes);
@@ -140,6 +144,7 @@ export default function App() {
       setOccupancy(occupancyRes.current);
       setMaxOccupancy(occupancyRes.max);
       setSettings(settingsRes);
+      setInvoices(invoicesRes);
       setIsLoaded(true);
     }
 
@@ -188,6 +193,9 @@ export default function App() {
 
     const refreshedWorkouts = await getWorkouts();
     setWorkouts(refreshedWorkouts);
+
+    const refreshedInvoices = await getInvoices();
+    setInvoices(refreshedInvoices);
   };
 
   const handleLogout = async () => {
@@ -302,6 +310,15 @@ export default function App() {
     }
   };
 
+  const handlePaymentSuccess = async () => {
+    const [profile, refreshedInvoices] = await Promise.all([
+      getMyProfile(),
+      getInvoices()
+    ]);
+    if (profile) setMemberProfile(profile);
+    setInvoices(refreshedInvoices);
+  };
+
   const handleUpdateSettings = (updates: Partial<AppSettings>) => {
     const next = { ...settings, ...updates };
     setSettings(next);
@@ -402,7 +419,7 @@ export default function App() {
         member={memberProfile}
         classes={classes}
         workouts={workouts}
-        invoices={INVOICES}
+        invoices={invoices}
         trainers={TRAINERS}
         club={CLUB}
         occupancy={occupancy}
@@ -414,6 +431,7 @@ export default function App() {
         onAddWorkout={handleAddWorkout}
         onUpdateProfile={handleUpdateProfile}
         onUpdateSettings={handleUpdateSettings}
+        onPaymentSuccess={handlePaymentSuccess}
         onLogout={handleLogout}
       />
     );

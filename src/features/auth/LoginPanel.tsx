@@ -16,6 +16,7 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
   const [mobile, setMobile] = useState('');
   const [otp, setOtp] = useState('');
   const [err, setErr] = useState('');
+  const [notRegistered, setNotRegistered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [activeCode, setActiveCode] = useState('');
   const [simulatedSms, setSimulatedSms] = useState<string | null>(null);
@@ -26,8 +27,13 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
   if (mode === 'signup' && !lockRole) {
     return (
       <SignUpWizard
+        initialPhone={mobile}
         onComplete={(session) => onLogin(session)}
-        onCancel={() => setMode('signin')}
+        onCancel={() => {
+          setErr('');
+          setNotRegistered(false);
+          setMode('signin');
+        }}
       />
     );
   }
@@ -37,15 +43,20 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
     const cleanMobile = mobile.replace(/\s+/g, '').replace(/^\+91/, '');
     if (!/^\d{10}$/.test(cleanMobile)) {
       setErr('Please enter a valid 10-digit mobile number');
+      setNotRegistered(false);
       return;
     }
     setErr('');
+    setNotRegistered(false);
     setIsLoading(true);
 
-    const result = await sendOtpService(cleanMobile);
+    const result = await sendOtpService(cleanMobile, 'login');
     setIsLoading(false);
 
     if (!result.success) {
+      if (result.notRegistered) {
+        setNotRegistered(true);
+      }
       setErr(result.error || 'Failed to dispatch verification code');
       return;
     }
@@ -174,7 +185,25 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
             </p>
           </div>
 
-          {err && <p className="text-xs text-red-400 font-medium">{err}</p>}
+          {err && (
+            <div className={`p-3 rounded-xl text-xs ${notRegistered ? 'bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-2' : 'bg-red-500/10 border border-red-500/30 text-red-400'}`}>
+              <p className="font-semibold">{err}</p>
+              {notRegistered && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErr('');
+                    setNotRegistered(false);
+                    setMode('signup');
+                  }}
+                  className="w-full py-2 px-3 rounded-lg bg-lime-400 hover:bg-lime-300 text-zinc-950 font-bold text-xs uppercase tracking-wider transition shadow flex items-center justify-center gap-1.5"
+                >
+                  <UserPlus className="w-3.5 h-3.5" />
+                  <span>Join Apex Gym (Register Membership)</span>
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             type="submit"

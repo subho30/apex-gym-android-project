@@ -5,17 +5,18 @@ import { PRICING_PLANS } from '../../constants/initialData';
 import { sendOtp, signUpMember } from '../../services/auth';
 
 interface SignUpWizardProps {
+  initialPhone?: string;
   onComplete: (session: UserSession, member: MemberProfile) => void;
   onCancel: () => void;
 }
 
-export function SignUpWizard({ onComplete, onCancel }: SignUpWizardProps) {
+export function SignUpWizard({ initialPhone, onComplete, onCancel }: SignUpWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
   // Form State
   const [selectedPlan, setSelectedPlan] = useState<PricingPlan>(PRICING_PLANS[1]); // Default Annual Pro
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(initialPhone || '');
   const [email, setEmail] = useState('');
   const [goal, setGoal] = useState('Build muscle & strength');
   const [emergencyContact, setEmergencyContact] = useState('');

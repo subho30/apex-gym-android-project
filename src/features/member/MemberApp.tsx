@@ -60,6 +60,7 @@ interface MemberAppProps {
   onAddWorkout: (workout: Omit<WorkoutEntry, 'id' | 'date'>) => void;
   onUpdateProfile: (updates: Partial<MemberProfile>) => void;
   onUpdateSettings: (settings: Partial<AppSettings>) => void;
+  onPaymentSuccess?: () => void;
   onLogout: () => void;
 }
 
@@ -80,6 +81,7 @@ export function MemberApp({
   onAddWorkout,
   onUpdateProfile,
   onUpdateSettings,
+  onPaymentSuccess,
   onLogout
 }: MemberAppProps) {
   const { triggerHaptic } = useNativeMobile();
@@ -141,6 +143,7 @@ export function MemberApp({
         onSuccess: (paymentId) => {
           triggerHaptic('success');
           setPaymentNotice(`Payment Successful! Razorpay Ref: ${paymentId}`);
+          if (onPaymentSuccess) onPaymentSuccess();
           setTimeout(() => setPaymentNotice(null), 10000);
         },
         onFailure: (err) => {

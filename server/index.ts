@@ -78,9 +78,21 @@ function authMiddleware(req: Request, res: Response, next: NextFunction) {
 const otpStore = new Map<string, string>();
 
 app.post('/api/auth/send-otp', async (req, res) => {
-  const { phone } = req.body;
+  const { phone, purpose } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number required' });
   const cleanPhone = String(phone).replace(/\s+/g, '').replace(/^\+91/, '');
+
+  // If this is a member sign-in attempt, verify that the member already exists in the database
+  if (purpose === 'login') {
+    const user = db.prepare('SELECT id, name FROM users WHERE mobile = ?').get(cleanPhone);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        notRegistered: true,
+        error: `No active membership found for +91 ${cleanPhone}. Please click 'Join Apex Gym' to register.`
+      });
+    }
+  }
 
   // Generate an authentic 4-digit verification code
   const code = String(Math.floor(1000 + Math.random() * 9000));
@@ -112,23 +124,11 @@ app.post('/api/auth/verify-otp', (req, res) => {
   let user = db.prepare('SELECT * FROM users WHERE mobile = ?').get(cleanPhone) as any;
 
   if (!user) {
-    const userId = `usr-${Date.now()}`;
-    const name = `Member ${cleanPhone.slice(-4)}`;
-    db.prepare('INSERT INTO users (id, mobile, role, name) VALUES (?, ?, ?, ?)').run(
-      userId,
-      cleanPhone,
-      'member',
-      name
-    );
-
-    const memId = `mem-${Date.now()}`;
-    const memberTag = `APX-${Math.floor(2000 + Math.random() * 7900)}`;
-    db.prepare(`
-      INSERT INTO members (id, user_id, member_id, name, tier, status, streak_days, next_renewal, card_last_4, is_checked_in, mobile, goal, home_club, coach)
-      VALUES (?, ?, ?, ?, 'Annual Pro', 'Active', 1, 'Dec 01, 2026', '4829', 0, ?, 'Build muscle', 'Park Street', 'Karan Singh')
-    `).run(memId, userId, memberTag, name, `+91 ${cleanPhone}`);
-
-    user = { id: userId, mobile: cleanPhone, role: 'member', name };
+    return res.status(404).json({
+      success: false,
+      notRegistered: true,
+      error: `No active account found for +91 ${cleanPhone}. Please register under 'Join Apex Gym'.`
+    });
   }
 
   const token = createToken(user.id);
@@ -208,6 +208,25 @@ app.post('/api/auth/signup', (req, res) => {
 
   const token = createToken(userId);
   const updatedMember = db.prepare('SELECT * FROM members WHERE id = ?').get(memId) as any;
+
+  // Generate official onboarding tax invoice in DB
+  const invId = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const planTier = tier || 'Annual Pro';
+  const amountStr = planTier.includes('Diamond') ? '₹45,000' : planTier.includes('Annual') ? '₹28,500' : '₹3,499';
+  try {
+    db.prepare(`
+      INSERT INTO invoices (id, member_id, date, description, amount, status)
+      VALUES (?, ?, ?, ?, ?, 'Paid')
+    `).run(
+      invId,
+      memId,
+      new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+      `${planTier} Membership Enrollment`,
+      amountStr
+    );
+  } catch (err) {
+    console.warn('[Invoice Creation Error]:', err);
+  }
 
   // Trigger real welcome email via Resend if email was entered
   if (email && email.includes('@')) {
@@ -853,6 +872,28 @@ app.post('/api/payments/verify', authMiddleware, (req, res) => {
       SET status = 'Active', tier = COALESCE(?, tier), next_renewal = ?, is_checked_in = 0, updated_at = datetime('now')
       WHERE id = ? OR member_id = ?
     `).run(planName || 'Annual Pro', renewalDate, memberId, memberId);
+
+    // Record verified payment invoice in DB
+    const targetMember = db.prepare('SELECT id FROM members WHERE id = ? OR member_id = ?').get(memberId, memberId) as any;
+    if (targetMember) {
+      const invId = `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const amountStr = amount ? `₹${Number(amount).toLocaleString('en-IN')}` : '₹28,500';
+      try {
+        db.prepare(`
+          INSERT INTO invoices (id, member_id, date, description, amount, status, payment_id)
+          VALUES (?, ?, ?, ?, ?, 'Paid', ?)
+        `).run(
+          invId,
+          targetMember.id,
+          new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+          `${planName || 'Annual Pro'} Renewal (Razorpay Online)`,
+          amountStr,
+          paymentId
+        );
+      } catch (err) {
+        console.warn('[Invoice Recording Error]:', err);
+      }
+    }
   }
 
   res.json({
@@ -860,6 +901,27 @@ app.post('/api/payments/verify', authMiddleware, (req, res) => {
     message: 'Payment verified and membership activated!',
     paymentId
   });
+});
+
+// ---------------------------------------------------------------------------
+// 9. INVOICES API (AUTHENTIC BILLING & TAX INVOICES)
+// ---------------------------------------------------------------------------
+
+app.get('/api/invoices', authMiddleware, (req, res) => {
+  const user = (req as any).user;
+  const member = db.prepare('SELECT id FROM members WHERE user_id = ?').get(user.id) as any;
+  if (!member) return res.json([]);
+
+  const invoices = db.prepare('SELECT * FROM invoices WHERE member_id = ? ORDER BY created_at DESC').all(member.id) as any[];
+  res.json(
+    invoices.map((inv) => ({
+      id: inv.id,
+      date: inv.date,
+      desc: inv.description,
+      amount: inv.amount,
+      status: inv.status
+    }))
+  );
 });
 
 // --- Serve Static Frontend Assets (Production Unified Deployment) ---

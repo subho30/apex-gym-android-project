@@ -11,23 +11,31 @@ export interface AuthSession {
   accessToken: string;
 }
 
-export async function sendOtp(phone: string): Promise<{ success: boolean; code?: string; error?: string }> {
+export async function sendOtp(
+  phone: string,
+  purpose: 'login' | 'signup' = 'login'
+): Promise<{ success: boolean; code?: string; notRegistered?: boolean; error?: string }> {
   try {
     const res = await apiFetch<{ success: boolean; message?: string; code?: string }>('/auth/send-otp', {
       method: 'POST',
-      body: JSON.stringify({ phone })
+      body: JSON.stringify({ phone, purpose })
     });
-    return { success: res.success, code: res.code || '4829' };
+    return { success: res.success, code: res.code };
   } catch (err: any) {
-    // Local demo fallback if server not reachable
-    return { success: true, code: '4829' };
+    const message = err?.message || 'Failed to dispatch verification code';
+    const notRegistered = message.toLowerCase().includes('no active membership') || message.toLowerCase().includes('not found') || message.toLowerCase().includes('register');
+    return {
+      success: false,
+      notRegistered,
+      error: message
+    };
   }
 }
 
 export async function verifyOtp(
   phone: string,
   otpCode: string
-): Promise<{ success: boolean; session?: AuthSession; error?: string }> {
+): Promise<{ success: boolean; session?: AuthSession; notRegistered?: boolean; error?: string }> {
   try {
     const res = await apiFetch<{ success: boolean; session: AuthSession }>('/auth/verify-otp', {
       method: 'POST',
@@ -40,33 +48,13 @@ export async function verifyOtp(
     }
     return { success: false, error: 'Verification failed' };
   } catch (err: any) {
-    // Local demo fallback if offline
-    const cleanPhone = phone.replace(/\s+/g, '');
-    let role: UserRole = 'member';
-    let name = 'Rohan Sharma';
-    let memberId = 'APX-2041';
-
-    if (cleanPhone.endsWith('10002')) {
-      role = 'staff';
-      name = 'Meera Joshi (Front Desk)';
-      memberId = 'STAFF-102';
-    } else if (cleanPhone.endsWith('10003')) {
-      role = 'manager';
-      name = 'Anita Das (General Manager)';
-      memberId = 'MGR-001';
-    }
-
-    const session: AuthSession = {
-      userId: `demo-${role}`,
-      role,
-      name,
-      memberId,
-      phone: cleanPhone,
-      accessToken: 'demo-token'
+    const message = err?.message || 'Verification failed. Please check code.';
+    const notRegistered = message.toLowerCase().includes('no active account') || message.toLowerCase().includes('register');
+    return {
+      success: false,
+      notRegistered,
+      error: message
     };
-
-    await StorageService.set('apex_auth_session', session);
-    return { success: true, session };
   }
 }
 

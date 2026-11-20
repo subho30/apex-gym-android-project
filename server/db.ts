@@ -120,6 +120,18 @@ export function initDb() {
       used_at TEXT,
       FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS invoices (
+      id TEXT PRIMARY KEY,
+      member_id TEXT NOT NULL,
+      date TEXT NOT NULL,
+      description TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Paid',
+      payment_id TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    );
   `);
 
   // Seed default occupancy if not present
@@ -206,6 +218,15 @@ export function initDb() {
       ('ld-1', 'Tanvi Sen', '+91 98311 44550', 'Instagram Ad', 'Booked Free Trial'),
       ('ld-2', 'Aakash Roy', '+91 98302 99881', 'Walk-in Inquiry', 'Demo Scheduled'),
       ('ld-3', 'Debolina Dutta', '+91 98310 11223', 'Google Maps', 'Pending Call')
+    `).run();
+
+    // Invoices for Rohan Sharma (mem-1)
+    db.prepare(`
+      INSERT INTO invoices (id, member_id, date, description, amount, status)
+      VALUES
+      ('INV-2026-11', 'mem-1', '01 Nov 2026', 'Annual Pro Membership Renewal', '₹28,500', 'Paid'),
+      ('INV-2026-10', 'mem-1', '15 Oct 2026', '10x Personal Training Pack (Coach Karan)', '₹14,000', 'Paid'),
+      ('INV-2026-08', 'mem-1', '01 Aug 2026', 'Locker Rental (Bay 42)', '₹1,200', 'Paid')
     `).run();
   }
 }
