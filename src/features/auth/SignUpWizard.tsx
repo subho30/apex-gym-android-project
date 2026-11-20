@@ -43,7 +43,7 @@ export function SignUpWizard({ initialPhone, onComplete, onCancel }: SignUpWizar
     setErr('');
     setIsLoading(true);
 
-    const res = await sendOtp(cleanPhone);
+    const res = await sendOtp(cleanPhone, 'signup');
     setIsLoading(false);
 
     if (res.success) {

@@ -80,38 +80,10 @@ export async function signUpMember(data: {
     }
     return { success: false, error: 'Registration failed' };
   } catch (err: any) {
-    // Local demo fallback
-    const cleanPhone = data.phone.replace(/\s+/g, '');
-    const memberId = `APX-${Math.floor(2000 + Math.random() * 7900)}`;
-    const session: AuthSession = {
-      userId: `usr-${Date.now()}`,
-      role: 'member',
-      name: data.name.trim(),
-      memberId,
-      phone: cleanPhone,
-      accessToken: 'demo-token'
+    return {
+      success: false,
+      error: err.message || 'Registration failed. Please check network connection.'
     };
-    const member: MemberProfile = {
-      id: `mem-${Date.now()}`,
-      memberId,
-      name: data.name.trim(),
-      tier: data.tier || 'Annual Pro',
-      status: 'Active',
-      streakDays: 0,
-      nextRenewal: 'Dec 01, 2026',
-      cardLast4: '4829',
-      isCheckedIn: false,
-      mobile: `+91 ${cleanPhone}`,
-      email: data.email || '',
-      goal: data.goal || 'Build muscle',
-      homeClub: 'Park Street Flagship',
-      coach: 'Karan Singh',
-      joined: new Date().toISOString().slice(0, 10),
-      emergencyContact: data.emergencyContact || ''
-    };
-    await StorageService.set('apex_auth_session', session);
-    await StorageService.set('apex_member', member);
-    return { success: true, session, member };
   }
 }
 
