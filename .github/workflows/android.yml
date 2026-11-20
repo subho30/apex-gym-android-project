@@ -34,6 +34,9 @@ jobs:
         run: npm ci
 
       - name: Typecheck and build web assets
+        env:
+          VITE_API_URL: https://apex-gym-stack.onrender.com/api
+          VITE_WS_URL: wss://apex-gym-stack.onrender.com/ws
         run: npm run build
 
       - name: Sync with Capacitor Android
