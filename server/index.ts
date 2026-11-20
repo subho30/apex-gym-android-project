@@ -924,6 +924,187 @@ app.get('/api/invoices', authMiddleware, (req, res) => {
   );
 });
 
+// ---------------------------------------------------------------------------
+// 10. LIVE DATABASE INSPECTOR (BROWSER DASHBOARD & JSON INSPECTION)
+// ---------------------------------------------------------------------------
+
+app.get('/api/admin/db-inspect', (req, res) => {
+  const users = db.prepare('SELECT id, mobile, role, name, created_at FROM users ORDER BY created_at DESC').all() as any[];
+  const members = db.prepare('SELECT id, member_id, name, mobile, email, tier, status, streak_days, next_renewal, created_at FROM members ORDER BY created_at DESC').all() as any[];
+  const invoices = db.prepare('SELECT id, member_id, date, description, amount, status, payment_id, created_at FROM invoices ORDER BY created_at DESC').all() as any[];
+  const checkins = db.prepare('SELECT id, member_name, tier, gate, method, created_at FROM check_ins ORDER BY created_at DESC LIMIT 25').all() as any[];
+  const occupancy = db.prepare('SELECT current_count, max_capacity, updated_at FROM occupancy WHERE id = 1').get() as any;
+  const leads = db.prepare('SELECT id, name, phone, source, status, created_at FROM leads ORDER BY created_at DESC').all() as any[];
+
+  const data = {
+    serverTime: new Date().toISOString(),
+    occupancy,
+    totalMembers: members.length,
+    totalInvoices: invoices.length,
+    users,
+    members,
+    invoices,
+    recentCheckIns: checkins,
+    leads
+  };
+
+  if (req.headers.accept?.includes('text/html')) {
+    return res.send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Apex Gym • Live Database Inspector</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #09090b; color: #f4f4f5; margin: 0; padding: 28px; }
+    .container { max-width: 1100px; margin: 0 auto; }
+    h1 { color: #a3e635; font-size: 24px; font-weight: 900; margin: 0 0 4px 0; letter-spacing: -0.5px; }
+    .badge { display: inline-block; background: #a3e635; color: #09090b; font-weight: 800; font-size: 10px; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; }
+    .card { background: #18181b; border: 1px solid #27272a; border-radius: 16px; padding: 22px; margin-top: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.5); }
+    h2 { font-size: 15px; font-weight: 800; color: #fff; margin: 0 0 14px 0; border-bottom: 1px solid #27272a; padding-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; color: #71717a; padding: 8px 12px; border-bottom: 1px solid #27272a; text-transform: uppercase; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+    td { padding: 10px 12px; border-bottom: 1px solid #27272a; }
+    tr:last-child td { border-bottom: none; }
+    .status-active { color: #86efac; font-weight: 700; }
+    .status-due { color: #fca5a5; font-weight: 700; }
+    .btn-refresh { background: #27272a; color: #fff; border: 1px solid #3f3f46; padding: 8px 16px; border-radius: 10px; font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s; }
+    .btn-refresh:hover { background: #3f3f46; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #d4d4d8; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <h1>APEX GYM • LIVE DATABASE INSPECTOR</h1>
+        <p style="margin:4px 0 0 0; color:#a1a1aa; font-size:12px;">SQLite Database: <code>.data/apex.db</code> • Live Server</p>
+      </div>
+      <div>
+        <a href="/api/admin/db-inspect" class="btn-refresh">⟳ Refresh DB Data</a>
+      </div>
+    </div>
+
+    <!-- Live Counters -->
+    <div class="card" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:20px;">
+      <div>
+        <span style="font-size:10px; color:#a1a1aa; text-transform:uppercase; font-weight:700;">Live Gym Headcount</span>
+        <p style="font-size:28px; font-weight:900; color:#a3e635; margin:6px 0 0 0;">${occupancy?.current_count || 0} <span style="font-size:14px; color:#71717a;">/ ${occupancy?.max_capacity || 120}</span></p>
+      </div>
+      <div>
+        <span style="font-size:10px; color:#a1a1aa; text-transform:uppercase; font-weight:700;">Registered Members</span>
+        <p style="font-size:28px; font-weight:900; color:#fff; margin:6px 0 0 0;">${members.length}</p>
+      </div>
+      <div>
+        <span style="font-size:10px; color:#a1a1aa; text-transform:uppercase; font-weight:700;">Invoices In Database</span>
+        <p style="font-size:28px; font-weight:900; color:#fff; margin:6px 0 0 0;">${invoices.length}</p>
+      </div>
+      <div>
+        <span style="font-size:10px; color:#a1a1aa; text-transform:uppercase; font-weight:700;">Total Check-Ins</span>
+        <p style="font-size:28px; font-weight:900; color:#fff; margin:6px 0 0 0;">${checkins.length}</p>
+      </div>
+    </div>
+
+    <!-- Members Table -->
+    <div class="card">
+      <h2><span>Registered Members</span> <span class="badge">${members.length} Total</span></h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Member ID</th>
+            <th>Name</th>
+            <th>Mobile</th>
+            <th>Email</th>
+            <th>Tier</th>
+            <th>Status</th>
+            <th>Next Renewal</th>
+            <th>Joined</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${members.map(m => `
+            <tr>
+              <td><code>${m.member_id}</code></td>
+              <td><strong>${m.name}</strong></td>
+              <td>${m.mobile}</td>
+              <td style="color:#a1a1aa;">${m.email || '—'}</td>
+              <td><span class="badge">${m.tier}</span></td>
+              <td class="${m.status === 'Active' ? 'status-active' : 'status-due'}">${m.status}</td>
+              <td>${m.next_renewal || '—'}</td>
+              <td style="color:#71717a;">${m.created_at?.slice(0, 10)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Invoices Table -->
+    <div class="card">
+      <h2><span>Invoices & Payment Records</span> <span class="badge">${invoices.length} Total</span></h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Invoice ID</th>
+            <th>Member ID</th>
+            <th>Description</th>
+            <th>Date</th>
+            <th>Amount</th>
+            <th>Status</th>
+            <th>Gateway Ref</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${invoices.map(inv => `
+            <tr>
+              <td><code>${inv.id}</code></td>
+              <td><code>${inv.member_id}</code></td>
+              <td>${inv.description}</td>
+              <td>${inv.date}</td>
+              <td style="color:#a3e635; font-weight:700;">${inv.amount}</td>
+              <td><span style="color:#86efac; font-weight:700;">${inv.status}</span></td>
+              <td style="font-family:monospace; color:#71717a;">${inv.payment_id || '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Recent Check-Ins -->
+    <div class="card">
+      <h2><span>Turnstile Gate Check-Ins</span> <span class="badge">Last ${checkins.length}</span></h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th>Tier</th>
+            <th>Gate</th>
+            <th>Method</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${checkins.map(c => `
+            <tr>
+              <td><strong>${c.member_name}</strong></td>
+              <td>${c.tier}</td>
+              <td>${c.gate}</td>
+              <td><code>${c.method}</code></td>
+              <td style="color:#71717a;">${c.created_at}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
+    `);
+  }
+
+  res.json(data);
+});
+
 // --- Serve Static Frontend Assets (Production Unified Deployment) ---
 import path from 'node:path';
 import fs from 'node:fs';
