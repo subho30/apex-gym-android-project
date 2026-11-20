@@ -17,6 +17,7 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
   const [otp, setOtp] = useState('');
   const [err, setErr] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [activeCode, setActiveCode] = useState('');
   const [simulatedSms, setSimulatedSms] = useState<string | null>(null);
 
   const inputClass =
@@ -50,9 +51,10 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
     }
 
     const code = result.code || '4829';
-    setOtp(code);
-    setSimulatedSms(`Your Apex Gym security code is ${code}. Valid for 10 minutes.`);
-    setTimeout(() => setSimulatedSms(null), 8000);
+    setActiveCode(code);
+    setOtp('');
+    setSimulatedSms(`Your Apex Gym verification code is ${code}. Valid for 10 minutes.`);
+    setTimeout(() => setSimulatedSms(null), 12000);
     setStep(2);
   };
 
@@ -86,17 +88,28 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
     <div className="relative px-6 py-8 space-y-6">
       {/* Authentic Incoming SMS Banner Animation */}
       {simulatedSms && (
-        <div className="absolute top-2 left-4 right-4 z-50 animate-bounce bg-zinc-800/95 border border-lime-400/60 p-3 rounded-2xl shadow-2xl backdrop-blur-md flex items-start gap-3">
-          <div className="w-8 h-8 rounded-full bg-lime-400 text-zinc-950 flex items-center justify-center shrink-0">
-            <MessageSquare className="w-4 h-4" />
+        <div
+          onClick={() => {
+            if (activeCode) setOtp(activeCode);
+            setSimulatedSms(null);
+          }}
+          className="absolute top-2 left-3 right-3 z-50 cursor-pointer bg-zinc-900/95 hover:bg-zinc-850 border border-lime-400/80 p-3.5 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center gap-3 transition transform active:scale-95 duration-200 ring-2 ring-lime-400/20"
+        >
+          <div className="w-9 h-9 rounded-xl bg-lime-400 text-zinc-950 flex items-center justify-center shrink-0 shadow-md">
+            <MessageSquare className="w-5 h-5" />
           </div>
-          <div className="flex-1">
-            <div className="flex items-center justify-between text-[10px] text-zinc-400 font-semibold">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
               <span>MESSAGES • NOW</span>
-              <span className="text-lime-400 font-bold">Apex Security</span>
+              <span className="text-lime-400">Apex Security</span>
             </div>
-            <p className="text-xs text-white font-medium mt-0.5">{simulatedSms}</p>
+            <p className="text-xs text-white font-medium mt-0.5">
+              Code: <strong className="text-lime-400 font-mono tracking-widest text-sm">{activeCode}</strong> · Tap to auto-fill
+            </p>
           </div>
+          <span className="text-[10px] font-bold bg-lime-400 text-zinc-950 px-2 py-1 rounded-lg shrink-0 shadow">
+            Fill
+          </span>
         </div>
       )}
 
@@ -191,6 +204,15 @@ export function LoginPanel({ lockRole, onLogin }: LoginPanelProps) {
               placeholder="••••"
               className={`text-center font-mono tracking-widest text-xl py-3 ${inputClass}`}
             />
+            {activeCode && !otp && (
+              <button
+                type="button"
+                onClick={() => setOtp(activeCode)}
+                className="mt-2 text-[11px] text-lime-400/90 hover:text-lime-300 font-semibold text-center w-full block transition"
+              >
+                Tap to auto-fill verification code: <span className="font-mono font-bold tracking-widest underline">{activeCode}</span>
+              </button>
+            )}
           </div>
 
           {err && <p className="text-xs text-red-400 font-medium text-center">{err}</p>}
